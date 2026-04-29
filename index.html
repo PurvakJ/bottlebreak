@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>🍾 GLASS BOTTLE SHOOT | One by One Spawn 🎯</title>
+    <style>
+        * {
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: linear-gradient(145deg, #0a1f1e, #0c2a2a);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', 'Press Start 2P', 'Courier New', monospace;
+            padding: 20px;
+        }
+
+        .game-container {
+            background: rgba(0, 0, 0, 0.55);
+            backdrop-filter: blur(4px);
+            border-radius: 56px;
+            padding: 18px 24px 24px;
+            box-shadow: 0 30px 45px rgba(0, 0, 0, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(120, 200, 180, 0.5);
+        }
+
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 28px;
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.5);
+            cursor: crosshair;
+        }
+
+        .info-panel {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 18px;
+            background: #07161be6;
+            backdrop-filter: blur(12px);
+            padding: 10px 28px;
+            border-radius: 60px;
+            color: #d4f1f9;
+            text-shadow: 1px 1px 0 #1a5a5a;
+            gap: 20px;
+            flex-wrap: wrap;
+            border: 1px solid #3aa88a;
+        }
+
+        .stat {
+            background: #00000066;
+            padding: 6px 22px;
+            border-radius: 36px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+
+        .restart-btn {
+            background: radial-gradient(circle at 30% 20%, #5fc3b0, #2c8f7a);
+            border: none;
+            font-family: inherit;
+            font-weight: bold;
+            padding: 8px 28px;
+            border-radius: 42px;
+            cursor: pointer;
+            color: #0a2a25;
+            transition: 0.07s linear;
+            box-shadow: 0 4px 0 #1a5a4a;
+            font-size: 1rem;
+        }
+
+        .restart-btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 1px 0 #1a5a4a;
+        }
+
+        .controls {
+            background: #00000066;
+            padding: 6px 20px;
+            border-radius: 32px;
+            font-size: 0.7rem;
+            letter-spacing: 1px;
+            font-weight: bold;
+        }
+
+        .powerup-indicator {
+            background: #2a1f0cee;
+            padding: 6px 16px;
+            border-radius: 60px;
+            font-size: 0.8rem;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        @media (max-width: 700px) {
+            .stat { font-size: 1rem; padding: 4px 14px; }
+            .restart-btn { padding: 6px 18px; font-size: 0.8rem; }
+            .controls { font-size: 0.55rem; }
+        }
+    </style>
+</head>
+<body>
+<div>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="900" height="550"></canvas>
+        <div class="info-panel">
+            <div class="stat">💥 SCORE <span id="scoreValue">0</span></div>
+            <div class="stat">🍾 BOTTLES <span id="bottlesLeft">0</span></div>
+            <div class="powerup-indicator">🔫 AMMO: <span id="ammoCount">∞</span></div>
+            <button class="restart-btn" id="resetGameBtn">🔫 NEW SHOT</button>
+            <div class="controls">🎯 MOUSE / TOUCH → AIM + CLICK/SHOOT | 🧨 SHATTER BOTTLES (one by one spawn)</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function(){
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const W = 900, H = 550;
+        
+        // ---------- GAME PARAMS ----------
+        let score = 0;
+        let bottlesRemaining = 0;
+        let gameRunning = true;
+        
+        // ----- BOTTLES ARRAY (glass bottles with physics) -----
+        let bottles = [];
+        
+        // ----- PARTICLES for shattered glass effect -----
+        let particles = [];
+        
+        // ----- CROSSHAIR / AIM -----
+        let mouseX = W/2, mouseY = H/2;
+        let showCrosshair = true;
+        
+        // ----- SCREEN FLASH ON HIT -----
+        let screenFlash = 0;
+        
+        // ----- BOTTLE GENERATION: ONE BY ONE (controlled timer) -----
+        let spawnCooldown = 0;
+        let baseSpawnDelay = 45;      // frames between spawns (smooth one-by-one)
+        let minSpawnDelay = 28;        // gets faster as score increases but still one by one
+        
+        // Maximum bottles on screen at once (fair challenge)
+        let maxConcurrentBottles = 10;
+        
+        // ----- GAME SPEED / DIFFICULTY SCALING -----
+        let baseFallSpeed = 1.6;
+        
+        // --- glass bottle class (falling, rotation, unique) ---
+        class GlassBottle {
+            constructor(x, y, speedY = null) {
+                this.x = x;
+                this.y = y;
+                this.w = 28;
+                this.h = 42;
+                // speed increases slightly with score but remains fair
+                let extraSpeed = Math.min(2.4, Math.floor(score / 800) * 0.5);
+                this.speedY = (speedY !== null ? speedY : baseFallSpeed + extraSpeed) + Math.random() * 0.8;
+                this.rotation = 0;
+                this.rotSpeed = (Math.random() - 0.5) * 0.07;
+                this.active = true;
+                this.value = 10;
+                // visual glossy variant
+                this.glassTint = `hsl(${160 + Math.random() * 20}, 55%, 70%)`;
+            }
+            
+            update() {
+                if (!this.active) return;
+                this.y += this.speedY;
+                this.rotation += this.rotSpeed;
+                // remove if out of bounds (below canvas or far above)
+                if (this.y - this.h > H + 100 || this.y + this.h < -80) {
+                    this.active = false;
+                }
+            }
+            
+            draw() {
+                if (!this.active) return;
+                ctx.save();
+                ctx.translate(this.x + this.w/2, this.y + this.h/2);
+                ctx.rotate(this.rotation);
+                ctx.shadowBlur = 6;
+                ctx.shadowColor = "rgba(0,0,0,0.3)";
+                // glass body with transparency effect
+                ctx.fillStyle = this.glassTint;
+                ctx.beginPath();
+                ctx.roundRect(-this.w/2, -this.h/2, this.w, this.h, 8);
+                ctx.fill();
+                // inner highlight (gloss)
+                ctx.fillStyle = "#eafff5cc";
+                ctx.beginPath();
+                ctx.roundRect(-this.w/2 + 4, -this.h/2 + 4, this.w-8, this.h-8, 6);
+                ctx.fill();
+                // cork
+                ctx.fillStyle = "#c28b4e";
+                ctx.fillRect(-this.w/3, -this.h/2 - 6, this.w*0.66, 12);
+                // golden neck ring
+                ctx.fillStyle = "#d4af37";
+                ctx.fillRect(-this.w/3, -this.h/2 + 2, this.w*0.66, 5);
+                // shine reflection
+                ctx.fillStyle = "#ffffffdd";
+                ctx.beginPath();
+                ctx.moveTo(-this.w/3, -this.h/4);
+                ctx.lineTo(-this.w/6, -this.h/4 + 6);
+                ctx.lineTo(-this.w/3, -this.h/4 + 11);
+                ctx.fill();
+                ctx.restore();
+                
+                // liquid inside (sparkling)
+                ctx.save();
+                ctx.translate(this.x + this.w/2, this.y + this.h/2);
+                ctx.fillStyle = "#78d47eaa";
+                ctx.beginPath();
+                ctx.roundRect(-this.w/2 + 5, -this.h/4, this.w-10, this.h/2.5, 4);
+                ctx.fill();
+                ctx.restore();
+            }
+            
+            hit() {
+                if (!this.active) return false;
+                this.active = false;
+                // create glass shatter particles (shatter effect)
+                let shardCount = 16 + Math.floor(Math.random() * 14);
+                for (let i = 0; i < shardCount; i++) {
+                    particles.push(new GlassParticle(this.x + this.w/2, this.y + this.h/2, this.rotation));
+                }
+                score += this.value;
+                updateUI();
+                return true;
+            }
+        }
+        
+        // Glass shard particles (beautiful breaking effect)
+        class GlassParticle {
+            constructor(x, y, baseRot) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 5.2;
+                this.vy = (Math.random() - 0.8) * 4.2 - 2.5;
+                this.life = 1.0;
+                this.size = 2.5 + Math.random() * 6;
+                this.rot = Math.random() * Math.PI * 2;
+                this.decay = 0.018 + Math.random() * 0.022;
+                this.color = `hsl(${45 + Math.random() * 30}, 70%, 65%)`;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += 0.2;
+                this.life -= this.decay;
+                return this.life > 0;
+            }
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.life * 0.85;
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 3;
+                ctx.fillRect(this.x - this.size/2, this.y - this.size/2, this.size, this.size);
+                ctx.fillStyle = `rgba(255, 250, 180, ${this.life * 0.7})`;
+                ctx.fillRect(this.x - this.size/3, this.y - this.size/3, this.size/1.5, this.size/1.5);
+                ctx.restore();
+            }
+        }
+        
+        // ----- UTILITY roundRect -----
+        if (!CanvasRenderingContext2D.prototype.roundRect) {
+            CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+                if (w < 2 * r) r = w / 2;
+                if (h < 2 * r) r = h / 2;
+                this.moveTo(x+r, y);
+                this.lineTo(x+w-r, y);
+                this.quadraticCurveTo(x+w, y, x+w, y+r);
+                this.lineTo(x+w, y+h-r);
+                this.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+                this.lineTo(x+r, y+h);
+                this.quadraticCurveTo(x, y+h, x, y+h-r);
+                this.lineTo(x, y+r);
+                this.quadraticCurveTo(x, y, x+r, y);
+                return this;
+            };
+        }
+        
+        // ----- SPAWN ONE BOTTLE AT A TIME (strictly one by one) -----
+        function trySpawnBottle() {
+            if (!gameRunning) return false;
+            // limit max bottles on screen
+            const activeBottles = bottles.filter(b => b.active).length;
+            if (activeBottles >= maxConcurrentBottles) return false;
+            
+            // random X position with margins
+            let randX = 35 + Math.random() * (W - 70);
+            // dynamic fall speed based on score (progressive difficulty)
+            let extraDifficulty = Math.min(2.3, Math.floor(score / 700) * 0.4);
+            let speed = baseFallSpeed + extraDifficulty + Math.random() * 0.6;
+            let newBottle = new GlassBottle(randX, -35, speed);
+            bottles.push(newBottle);
+            updateBottlesCount();
+            return true;
+        }
+        
+        function updateBottlesCount() {
+            bottlesRemaining = bottles.filter(b => b.active).length;
+            document.getElementById('bottlesLeft').innerText = bottlesRemaining;
+        }
+        
+        // ---- SHOOTING (mouse click / touch) ----
+        function shootAt(targetX, targetY) {
+            if (!gameRunning) return false;
+            let hitDetected = false;
+            // iterate from end to front to avoid index issues
+            for (let i = bottles.length-1; i >= 0; i--) {
+                let b = bottles[i];
+                if (!b.active) continue;
+                let left = b.x, right = b.x + b.w;
+                let top = b.y, bottom = b.y + b.h;
+                if (targetX >= left && targetX <= right && targetY >= top && targetY <= bottom) {
+                    b.hit();
+                    hitDetected = true;
+                    updateBottlesCount();
+                    screenFlash = 10;
+                    break;
+                }
+            }
+            // miss effect: tiny dust particles
+            if (!hitDetected) {
+                for (let i=0; i<4; i++) {
+                    particles.push(new GlassParticle(targetX, targetY, 0));
+                }
+            }
+            updateUI();
+            return hitDetected;
+        }
+        
+        // ---- UPDATE GAME (physics, spawn rules, removal) ----
+        function updateGame() {
+            if (!gameRunning) return;
+            
+            // --- ONE BY ONE SPAWN MECHANICS ---
+            if (spawnCooldown <= 0) {
+                // only spawn if active bottles less than max (fair line)
+                if (bottles.filter(b => b.active).length < maxConcurrentBottles) {
+                    trySpawnBottle();
+                }
+                // dynamic cooldown: gets shorter with high score but still one at a time
+                let dynamicDelay = baseSpawnDelay - Math.floor(score / 550);
+                if (dynamicDelay < minSpawnDelay) dynamicDelay = minSpawnDelay;
+                spawnCooldown = dynamicDelay;
+            } else {
+                spawnCooldown--;
+            }
+            
+            // update all bottles
+            for (let i=bottles.length-1; i>=0; i--) {
+                bottles[i].update();
+                if (!bottles[i].active) {
+                    bottles.splice(i,1);
+                    updateBottlesCount();
+                }
+            }
+            
+            // update glass particles
+            for (let i=particles.length-1; i>=0; i--) {
+                let alive = particles[i].update();
+                if (!alive) particles.splice(i,1);
+            }
+            
+            // GAME OVER condition: any bottle reaches ground line (y + height >= H - 48)
+            for (let b of bottles) {
+                if (b.active && b.y + b.h >= H - 48) {
+                    gameRunning = false;
+                    break;
+                }
+            }
+            
+            if (screenFlash > 0) screenFlash--;
+            updateUI();
+        }
+        
+        // ---------- DRAW ALL VISUALS (attractive glass aesthetics) ----------
+        function drawBackground() {
+            let grad = ctx.createLinearGradient(0, 0, 0, H);
+            grad.addColorStop(0, "#154e49");
+            grad.addColorStop(1, "#1f7a6b");
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, W, H);
+            // table / counter
+            ctx.fillStyle = "#5e3a1c";
+            ctx.fillRect(0, H - 48, W, 48);
+            ctx.fillStyle = "#9b6a3a";
+            for(let i=0;i<W+25;i+=42){
+                ctx.fillRect(i, H-54, 28, 8);
+                ctx.fillStyle = "#c28b4e";
+                ctx.fillRect(i+6, H-60, 16, 6);
+                ctx.fillStyle = "#9b6a3a";
+            }
+            ctx.fillStyle = "#ddccaabb";
+            ctx.font = "bold 20px monospace";
+            ctx.fillText("🍾", W-70, H-18);
+            ctx.fillStyle = "#cfffe6";
+            ctx.font = "12px monospace";
+            ctx.fillText("✧ glass shatter zone ✧", W-170, H-12);
+        }
+        
+        function drawCrosshair() {
+            if (!showCrosshair) return;
+            ctx.save();
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.arc(mouseX, mouseY, 12, 0, Math.PI * 2);
+            ctx.strokeStyle = "#ffefb0";
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(mouseX - 24, mouseY);
+            ctx.lineTo(mouseX - 12, mouseY);
+            ctx.moveTo(mouseX + 24, mouseY);
+            ctx.lineTo(mouseX + 12, mouseY);
+            ctx.moveTo(mouseX, mouseY - 24);
+            ctx.lineTo(mouseX, mouseY - 12);
+            ctx.moveTo(mouseX, mouseY + 24);
+            ctx.lineTo(mouseX, mouseY + 12);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(mouseX, mouseY, 5, 0, Math.PI * 2);
+            ctx.fillStyle = "#ffdd77cc";
+            ctx.fill();
+            ctx.restore();
+        }
+        
+        function drawBottlesAndEffects() {
+            for (let b of bottles) b.draw();
+            for (let p of particles) p.draw();
+            
+            if (screenFlash > 0) {
+                ctx.fillStyle = `rgba(255, 245, 180, ${screenFlash/13})`;
+                ctx.fillRect(0, 0, W, H);
+            }
+        }
+        
+        function drawUItext() {
+            ctx.font = "bold 28px 'Segoe UI', 'Courier New'";
+            ctx.fillStyle = "#f9efb0";
+            ctx.shadowBlur = 5;
+            ctx.fillText(`💥 ${score}`, 28, 58);
+            if (!gameRunning) {
+                ctx.font = "bold 32px 'Press Start 2P', monospace";
+                ctx.fillStyle = "#ffbb77";
+                ctx.shadowBlur = 8;
+                ctx.fillText("💔 GAME OVER", W/2-170, H/2-45);
+                ctx.font = "18px monospace";
+                ctx.fillStyle = "#cff0dc";
+                ctx.fillText("Click 'NEW SHOT' to restart & shatter bottles", W/2-210, H/2+30);
+            }
+            // subtle tip
+            ctx.font = "11px monospace";
+            ctx.fillStyle = "#bde5d5";
+            ctx.fillText("✨ one bottle at a time spawn ✨", 18, H-22);
+        }
+        
+        // ----- RESET GAME (clean state) -----
+        function resetGame() {
+            gameRunning = true;
+            score = 0;
+            bottles = [];
+            particles = [];
+            spawnCooldown = 12;    // quick first spawn
+            baseFallSpeed = 1.6;
+            screenFlash = 0;
+            // reset dynamic variables
+            updateUI();
+            updateBottlesCount();
+            // spawn first bottle after short delay (allow fair start)
+            setTimeout(() => {
+                if (gameRunning && bottles.filter(b=>b.active).length === 0) {
+                    trySpawnBottle();
+                }
+            }, 100);
+        }
+        
+        function updateUI() {
+            document.getElementById('scoreValue').innerText = score;
+            document.getElementById('bottlesLeft').innerText = bottles.filter(b=>b.active).length;
+            document.getElementById('ammoCount').innerText = "∞";
+        }
+        
+        // ----- EVENT HANDLERS (mouse + touch) -----
+        function handleShoot(e) {
+            if (!gameRunning) return;
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            let clientX, clientY;
+            if (e.touches) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+                e.preventDefault();
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            let canvasX = (clientX - rect.left) * scaleX;
+            let canvasY = (clientY - rect.top) * scaleY;
+            if (canvasX >= 0 && canvasX <= W && canvasY >= 0 && canvasY <= H) {
+                shootAt(canvasX, canvasY);
+            }
+        }
+        
+        function updateMousePosition(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            let clientX, clientY;
+            if (e.touches) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            let canvasX = (clientX - rect.left) * scaleX;
+            let canvasY = (clientY - rect.top) * scaleY;
+            if (canvasX >= 0 && canvasX <= W && canvasY >= 0 && canvasY <= H) {
+                mouseX = canvasX;
+                mouseY = canvasY;
+            }
+        }
+        
+        // ---------- RENDER LOOP ----------
+        function render() {
+            drawBackground();
+            drawBottlesAndEffects();
+            drawCrosshair();
+            drawUItext();
+        }
+        
+        function gameLoop() {
+            updateGame();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // ---- SETUP EVENT LISTENERS ----
+        canvas.addEventListener('mousemove', updateMousePosition);
+        canvas.addEventListener('click', handleShoot);
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            updateMousePosition(e);
+            handleShoot(e);
+        });
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            updateMousePosition(e);
+        });
+        
+        document.getElementById('resetGameBtn').addEventListener('click', () => {
+            resetGame();
+        });
+        
+        // initialize
+        resetGame();
+        updateUI();
+        gameLoop();
+        
+        // additional: ensure that even if bottles are cleared, one by one will spawn
+        setInterval(() => {
+            if (gameRunning && bottles.filter(b=>b.active).length === 0 && spawnCooldown <= 5) {
+                // if no bottles and cooldown is low, force a spawn (emergency)
+                if (bottles.filter(b=>b.active).length === 0) trySpawnBottle();
+            }
+        }, 1200);
+    })();
+</script>
+</body>
+</html>
